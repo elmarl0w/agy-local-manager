@@ -25,6 +25,12 @@ FIXTURE = '''    write_file: {
 }
 function applyUniversalPathFallback(args)
 return { name: 'write_file', args: { AbsolutePath: absPath, Content: content, Append: cmd.includes('>>') } };
+function translateToolCallToNative(name, args) {
+    if (name !== 'run_command' || !args || !args.CommandLine) return { name, args };
+    return { name: 'list_dir', args: { DirectoryPath: '/tmp' } };
+}
+/**
+ * Formats native file tool outputs
 '''
 
 class AdapterPatchTest(unittest.TestCase):
@@ -32,8 +38,17 @@ class AdapterPatchTest(unittest.TestCase):
         result = m.patch_text(FIXTURE)
         self.assertIn("primaryKey: 'Path'", result)
         self.assertIn('args.toolSummary', result)
-        self.assertIn("name: 'write_file', args: { Path: absPath", result)
+        self.assertIn("return { name, args: safeArgs };", result)
         self.assertEqual(result, m.patch_text(result), 'Patch must be idempotent')
+        self.assertNotIn("return { name: 'list_dir'", result)
+        self.assertIn('delete safeArgs.Cwd;', result)
+        self.assertIn('delete normalized.Cwd;', result)
+
+    def test_timeout_patch(self):
+        original = 'const REQUEST_TIMEOUT_MS = model.timeout || 120000;'
+        patched = m.patch_proxy_text(original)
+        self.assertIn('600000', patched)
+        self.assertEqual(patched, m.patch_proxy_text(patched))
 
     def test_node_accepts_temporary_js_extension(self):
         if not shutil.which('node'):

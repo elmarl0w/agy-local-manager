@@ -46,10 +46,55 @@ function applyUniversalPathFallback(args)"""
 function applyUniversalPathFallback(args)"""
     if "if (name === 'write_file' || name === 'read_file')" not in src:
         src = swap(src, old, new, 'Path cleanup')
-    old = "return { name: 'write_file', args: { AbsolutePath: absPath, Content: content, Append: cmd.includes('>>') } };"
-    new = "return { name: 'write_file', args: { Path: absPath, Content: content, Append: cmd.includes('>>') } };"
-    src = swap(src, old, new, 'redirect')
+    # Disable command re-routing to missing/unsafe native tools in agy 1.5.x.
+    # Keep all ordinary shell commands as run_command, using the permission system.
+    start = 'function translateToolCallToNative(name, args) {'
+    end = '/**\n * Formats native file tool outputs'
+    if src.count(start) != 1 or src.count(end) != 1:
+        raise ValueError('translateToolCallToNative boundaries changed upstream')
+    begin = src.index(start)
+    finish = src.index(end, begin)
+    replacement = """function translateToolCallToNative(name, args) {
+    if (name === 'run_command') {
+        const safeArgs = { ...(args || {}) };
+        delete safeArgs.Cwd;
+        delete safeArgs.cwd;
+        return { name, args: safeArgs };
+    }
+    return { name, args };
+}
+"""
+    src = src[:begin] + replacement + src[finish:]
+    # The tool might bypass translation. Strip unsupported Cwd after normalization as well.
+    find = "    if (name === 'write_file' || name === 'read_file') {"
+    if src.count(find) != 1:
+        raise ValueError('normalization cleanup boundary changed upstream')
+    if 'delete normalized.Cwd;' not in src:
+        src = src.replace(find, "    if (name === 'run_command') {\n        delete normalized.Cwd;\n        delete normalized.cwd;\n    }\n" + find, 1)
     return src
+
+
+def patch_proxy_text(src):
+    old = 'const REQUEST_TIMEOUT_MS = model.timeout || 120000;'
+    new = 'const REQUEST_TIMEOUT_MS = model.timeout || 600000;'
+    return swap(src, old, new, 'custom model request timeout')
+
+
+def checked_write(p, patched):
+    original = p.read_text()
+    if patched == original:
+        return False
+    backup = p.with_name(p.name + '.orig')
+    if not backup.exists():
+        backup.write_text(original)
+    tmp = p.with_name(p.stem + '.new.js')
+    try:
+        tmp.write_text(patched)
+        subprocess.run(['node', '--check', str(tmp)], check=True)
+        tmp.replace(p)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return True
 
 
 def main():
@@ -61,18 +106,13 @@ def main():
     if json.loads(pkg.read_text()).get('version') != '1.1.5':
         raise SystemExit('Unsupported adapter version; only 1.1.5 is tested')
     p = base / 'dist/proxy/translators/utils.js'
-    original = p.read_text()
-    patched = patch_text(original)
-    if patched == original:
-        print('[OK] Adapter was already patched'); return
-    backup = p.with_suffix('.js.orig')
-    if not backup.exists():
-        backup.write_text(original)
-    tmp = p.with_name(p.stem + '.new.js')
-    tmp.write_text(patched)
-    subprocess.run(['node', '--check', str(tmp)], check=True)
-    tmp.replace(p)
-    print('[OK] Adapter tool parameter compatibility patch applied')
+    proxy = base / 'dist/proxy.js'
+    # Validate both transformations before writing either file.
+    patched_utils = patch_text(p.read_text())
+    patched_proxy = patch_proxy_text(proxy.read_text())
+    changed_utils = checked_write(p, patched_utils)
+    changed_proxy = checked_write(proxy, patched_proxy)
+    print('[OK] Adapter compatibility and timeout patches ' + ('applied' if changed_utils or changed_proxy else 'already present'))
 
 
 if __name__ == '__main__':

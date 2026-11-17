@@ -126,9 +126,13 @@ def ensure_local_adapter():
         raise RuntimeError('Adapter missing. Run `agy repair` (requires npm)')
     # Validate patched behavior without changing files at launch.
     script = '''const u=require(process.argv[1]);const r=u.normalizeToolArgs('run_command',{CommandLine:'pwd',ToolSummary:'test'});const f=u.normalizeToolArgs('write_file',{AbsolutePath:'/tmp/test.txt',Content:'x'});const rd=u.normalizeToolArgs('read_file',{AbsolutePath:'/tmp/test.txt'});if(r.toolSummary!=='test'||'ToolSummary' in r||f.Path!=='/tmp/test.txt'||'AbsolutePath' in f||rd.Path!=='/tmp/test.txt'||'AbsolutePath' in rd)process.exit(2);'''
+    script += """const cmds=['ls -la','cat file.txt','grep hello index.js'];for(const c of cmds){const x=u.translateToolCallToNative('run_command',{CommandLine:c,Cwd:'/tmp',toolSummary:'test'});if(x.name!=='run_command'||x.args.CommandLine!==c||'Cwd' in x.args)process.exit(3);}const n=u.normalizeToolArgs('run_command',{CommandLine:'pwd',Cwd:'/tmp',ToolSummary:'test'});if('Cwd' in n||'cwd' in n)process.exit(4);"""
     result = cmd(['node', '-e', script, str(js)], check=False)
     if result.returncode != 0:
         raise RuntimeError('Adapter tool schema checks failed. Run `agy repair`.')
+    proxy = ADAPTER / 'dist/proxy.js'
+    if 'const REQUEST_TIMEOUT_MS = model.timeout || 600000;' not in proxy.read_text():
+        raise RuntimeError('Adapter timeout patch missing. Run `agy repair`.')
     return cli
 
 
@@ -240,7 +244,7 @@ def main():
     if ns.action == 'repair':
         repair(); return 0
     if ns.action == 'version':
-        print('agy-local-manager 0.1.2'); return 0
+        print('agy-local-manager 0.1.3'); return 0
     if ns.action == 'setup-model':
         ensure_binary(); ensure_patch()
         cli = ensure_local_adapter()
