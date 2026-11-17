@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import shutil
 import subprocess
 import sys
@@ -55,7 +56,7 @@ def run_patcher(action, *, capture=True):
     return cmd([sys.executable, str(script), '--path-cli', str(BIN), *action], capture=capture)
 
 
-def ensure_binary():
+def ensure_binary(*, verbose=True):
     source = source_binary()
     BIN.parent.mkdir(parents=True, exist_ok=True)
     current_source_sha = sha(source)
@@ -71,7 +72,8 @@ def ensure_binary():
     staging.replace(BIN)
     STATE.mkdir(parents=True, exist_ok=True)
     marker.write_text(current_source_sha + '\n')
-    print(f'[agy-local] User copy synchronized with {source}')
+    if verbose:
+        print(f'[agy-local] User copy synchronized with {source}')
     return True
 
 
@@ -104,13 +106,14 @@ def patch_status():
     raise RuntimeError('Unrecognized patcher status. Run patcher status manually; refuse to guess:\n' + section[:1200])
 
 
-def ensure_patch():
+def ensure_patch(*, verbose=True):
     status = patch_status()
     if status == 'patched':
         return
     if is_running():
         raise RuntimeError('Cannot patch a running agy. Close CLI first.')
-    print('[agy-local] Applying opt-in local eligibility compatibility patch to USER COPY only')
+    if verbose:
+        print('[agy-local] Applying compatibility patch to USER COPY only')
     result = run_patcher(['patch', 'cli'])
     if patch_status() != 'patched':
         raise RuntimeError('Patch was not confirmed. Output:\n' + (result.stdout + result.stderr)[-2000:])
@@ -127,6 +130,15 @@ def ensure_local_adapter():
     if result.returncode != 0:
         raise RuntimeError('Adapter tool schema checks failed. Run `agy repair`.')
     return cli
+
+
+def proxy_port_busy():
+    """Return True if the adapter default loopback port already accepts TCP connections."""
+    try:
+        with socket.create_connection(('127.0.0.1', 50998), timeout=0.3):
+            return True
+    except (ConnectionRefusedError, TimeoutError, OSError):
+        return False
 
 
 def model_status():
@@ -163,6 +175,10 @@ def doctor():
         for name in names:
             if 'gemma' in (name or '').lower():
                 print('     ', name)
+    if proxy_port_busy():
+        print('[WARN] Port 50998 is already in use. Close the old proxy before launching agy.')
+    else:
+        print('[OK] Proxy port 50998 is available')
     print('[INFO] adapter model config:', 'present' if MODEL_FILE.is_file() else 'missing; run `agy models add`')
     print('[INFO] current versions:', 'adapter=1.1.5 pinned; CLI changes checked on start')
     return 0 if not problems else 1
@@ -190,8 +206,11 @@ def repair():
 
 
 def launch(args):
-    ensure_binary()
-    ensure_patch()
+    verbose = '--verbose' in args or '--debug' in args
+    if proxy_port_busy():
+        raise RuntimeError("Port 50998 is already in use. Close the old Antigravity/proxy instance; inspect with: ss -ltnp 'sport = :50998'. Refusing dynamic-port fallback.")
+    ensure_binary(verbose=verbose)
+    ensure_patch(verbose=verbose)
     cli = ensure_local_adapter()
     names = model_status()
     if names is None:
@@ -199,10 +218,19 @@ def launch(args):
     env = os.environ.copy()
     env['AGY_BIN'] = str(BIN)
     # No --debug by default: older proxy versions may print OAuth tokens in HTTP headers.
-    os.execvpe('node', ['node', str(cli), *args], env)
+    # Filter only known, informational startup strings. Never silence stderr wholesale.
+    node_args = ['node']
+    if not verbose:
+        node_args += ['--require', str(APP / 'scripts/quiet_startup.cjs')]
+    node_args += [str(cli), *args]
+    os.execvpe('node', node_args, env)
 
 
 def main():
+    # Leading diagnostic flags belong to the adapter, not to our subcommand parser.
+    if len(sys.argv) > 1 and sys.argv[1] in ('--verbose', '--debug'):
+        launch(sys.argv[1:])
+        return 0
     parser = argparse.ArgumentParser(prog='agy', description='Isolated Antigravity + Ollama local launcher')
     parser.add_argument('action', nargs='?', default='launch', help='doctor | repair | setup-model | version | launch; other args pass through')
     parser.add_argument('rest', nargs=argparse.REMAINDER)
@@ -212,7 +240,7 @@ def main():
     if ns.action == 'repair':
         repair(); return 0
     if ns.action == 'version':
-        print('agy-local-manager 0.1.0'); return 0
+        print('agy-local-manager 0.1.2'); return 0
     if ns.action == 'setup-model':
         ensure_binary(); ensure_patch()
         cli = ensure_local_adapter()

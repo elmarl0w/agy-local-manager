@@ -68,7 +68,7 @@ def main():
     backup = p.with_suffix('.js.orig')
     if not backup.exists():
         backup.write_text(original)
-    tmp = p.with_suffix('.js.new')
+    tmp = p.with_name(p.stem + '.new.js')
     tmp.write_text(patched)
     subprocess.run(['node', '--check', str(tmp)], check=True)
     tmp.replace(p)

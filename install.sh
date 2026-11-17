@@ -26,6 +26,7 @@ if [[ -e "$USER_BIN/agy" ]] && ! grep -q 'agy-local-manager/app/agy_manager.py' 
 fi
 install -m 755 "$ROOT/agy_manager.py" "$DEST/agy_manager.py"
 install -m 755 "$ROOT/scripts/patch_adapter.py" "$DEST/scripts/patch_adapter.py"
+install -m 644 "$ROOT/scripts/quiet_startup.cjs" "$DEST/scripts/quiet_startup.cjs"
 # Put a shell wrapper ahead of /usr/bin/agy. This is NOT a modification to system binary.
 cat > "$USER_BIN/agy" <<'EOF'
 #!/usr/bin/env bash

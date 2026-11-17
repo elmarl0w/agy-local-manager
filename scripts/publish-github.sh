@@ -17,7 +17,7 @@ fi
 git add README.md CONTRIBUTING.md .gitignore .github/workflows/ci.yml \
     docs/INSTALL.ru.md docs/ARCHITECTURE.ru.md docs/TROUBLESHOOTING.ru.md \
     agy_manager.py install.sh uninstall.sh scripts/patch_adapter.py \
-    scripts/publish-github.sh tests/test_adapter_patch.py tests/test_manager.py
+    scripts/publish-github.sh scripts/quiet_startup.cjs tests/test_adapter_patch.py tests/test_manager.py tests/test_quiet_startup.py
 if ! git diff --cached --quiet; then
   git commit -m 'Initial experimental local Antigravity Ollama manager'
 fi

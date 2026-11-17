@@ -1,4 +1,7 @@
 import importlib.util
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -31,6 +34,16 @@ class AdapterPatchTest(unittest.TestCase):
         self.assertIn('args.toolSummary', result)
         self.assertIn("name: 'write_file', args: { Path: absPath", result)
         self.assertEqual(result, m.patch_text(result), 'Patch must be idempotent')
+
+    def test_node_accepts_temporary_js_extension(self):
+        if not shutil.which('node'):
+            self.skipTest('Node.js unavailable')
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'utils.js'
+            temporary = target.with_name(target.stem + '.new.js')
+            temporary.write_text('const answer = 42;\n')
+            self.assertEqual(temporary.suffix, '.js')
+            subprocess.run(['node', '--check', str(temporary)], check=True)
 
     def test_rejects_unknown_upstream(self):
         with self.assertRaises(ValueError):
